@@ -41,13 +41,15 @@
 #define BW_A ((2.0 * BW_PI * BW_FC * BW_TS) / (1.0 + (2.0 * BW_PI * BW_FC * BW_TS))) //filter coefficient
 
 #define PD_TS 0.04
-#define KP_X 0.25
-#define KD_X 0.08
-#define KP_Y 0.25
-#define KD_Y 0.08
+#define KP_X 0.4
+#define KD_X 0.7
+#define KP_Y 0.4
+#define KD_Y 0.7
 
 #define SP_X 512.0
 #define SP_Y 512.0
+#define SP_R 100.0 // radius 
+#define SP_FREQ_HZ 0.40// circle frequency
 
 #define DUTY_X_FLAT 1450 //LCD to sticker
 #define DUTY_Y_FLAT 1400 // sticker to bottom
@@ -218,7 +220,6 @@ float pd_controller_x(float setpoint, float measurement)
     return (KP_X * e) + (KD_X * de_dt);
 }
 
-// ---------- Y axis ----------
 float pd_controller_y(float setpoint, float measurement)
 {
     static float e_prev_y = 0.0;
@@ -244,7 +245,7 @@ float butterworth_filter_x(float x)
 
 float butterworth_filter_y(float y)
 {
-    static float y_prev_y = 0.0f;
+    static float y_prev_y = 0.0;
     y_prev_y = y_prev_y + BW_A * (y - y_prev_y);
     return y_prev_y;
 }
@@ -269,6 +270,17 @@ void __attribute__((__interrupt__, auto_psv)) _T2Interrupt(void)
         state = 1;
         new_xy_ready = 1;
     }
+}
+
+void setpoint_circle_step(float *spx, float *spy)
+{
+    static float t = 0.0;
+
+    const float w = 2*BW_PI * SP_FREQ_HZ;
+    *spx = SP_X + (SP_R * cosf(w * t));
+    *spy = SP_Y + (SP_R * sinf(w * t));
+
+    t += PD_TS;
 }
 
 /*
@@ -307,9 +319,12 @@ void main_loop(void)
 
         x_f = butterworth_filter_x((float)x_raw);
         y_f = butterworth_filter_y((float)y_raw);
+        
+        float spx, spy;
+        setpoint_circle_step(&spx, &spy);
 
-        ux = pd_controller_x(SP_X, x_f);
-        uy = pd_controller_y(SP_Y, y_f);
+        ux = pd_controller_x(spx, x_f);
+        uy = pd_controller_y(spy, y_f);
 
         int dutyX = (int)(DUTY_X_FLAT + (U_TO_DUTY * ux));
         int dutyY = (int)(DUTY_Y_FLAT + (U_TO_DUTY * uy));
@@ -325,13 +340,6 @@ void main_loop(void)
         lcd_div++;
         if (lcd_div >= 10) {
             lcd_div = 0;
-
-            lcd_locate(0, 4);
-            lcd_printf("X/Y=%4u/%4u ", x_raw, y_raw);
-
-            lcd_locate(0, 5);
-            lcd_printf("FX/FY=%4u/%4u ", (uint16_t)x_f, (uint16_t)y_f);
-
             lcd_locate(0, 6);
             lcd_printf("miss=%u     ", miss_deadline);
         }
