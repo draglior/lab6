@@ -12,13 +12,6 @@
 #include "lcd.h"
 #include "led.h"
 
-
-/*
- * Parameter
- */
-
-
-
 /*
  * Common Definitions
  */
@@ -296,22 +289,17 @@ void main_loop(void)
 
     servo_initialize();
     touchscreen_initialize();
-    
-    // touchscreen_set_dimension(TOUCH_DIM_X);
 
     // Set initial position
     servo_setduty(0, DUTY_Y_FLAT);
     servo_setduty(1, DUTY_X_FLAT);
 
-
-    float x_f = 0.0f, y_f = 0.0f;
-    float ux = 0.0f, uy = 0.0f;
-
-    uint16_t lcd_div = 0;   // 50 Hz -> 5 Hz (print every 10 control steps)
+    float x_f = 0.0, y_f = 0.0;
+    float ux = 0.0, uy = 0.0;
+    uint16_t lcd_div = 0;
 
     while (TRUE)
     {
-        // Wait for a fresh XY pair (arrives at 50 Hz from ISR)
         if (!new_xy_ready) continue;
 
         exec_busy = 1;
@@ -334,14 +322,14 @@ void main_loop(void)
         if (dutyY < PWM_MIN_US) dutyY = PWM_MIN_US;
         if (dutyY > PWM_MAX_US) dutyY = PWM_MAX_US;
 
-        servo_setduty(1, (uint16_t)dutyX); // X
-        servo_setduty(0, (uint16_t)dutyY); // Y
+        servo_setduty(1, (uint16_t)dutyX);
+        servo_setduty(0, (uint16_t)dutyY);
 
         lcd_div++;
         if (lcd_div >= 10) {
             lcd_div = 0;
             lcd_locate(0, 6);
-            lcd_printf("miss=%u     ", miss_deadline);
+            lcd_printf("deadlines missed=%u     ", miss_deadline);
         }
 
         exec_busy = 0;
