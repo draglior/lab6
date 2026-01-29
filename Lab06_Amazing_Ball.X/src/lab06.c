@@ -34,14 +34,14 @@
 #define BW_A ((2.0 * BW_PI * BW_FC * BW_TS) / (1.0 + (2.0 * BW_PI * BW_FC * BW_TS))) //filter coefficient
 
 #define PD_TS 0.04
-#define KP_X 0.4
-#define KD_X 0.7
-#define KP_Y 0.4
-#define KD_Y 0.7
+#define KP_X 0.35
+#define KD_X 0.66
+#define KP_Y 0.35
+#define KD_Y 0.66
 
 #define SP_X 512.0
 #define SP_Y 512.0
-#define SP_R 100.0 // radius 
+#define SP_R 150.0 // radius 
 #define SP_FREQ_HZ 0.40// circle frequency
 
 #define DUTY_X_FLAT 1450 //LCD to sticker
@@ -55,6 +55,11 @@ uint16_t y_raw = 0;
 uint8_t  new_xy_ready = 0;
 uint16_t miss_deadline = 0;
 uint8_t  exec_busy = 0;
+
+volatile float spx = 512.0;
+volatile float spy = 512.0;
+
+
 /*
  * Timer Code
  */
@@ -265,13 +270,13 @@ void __attribute__((__interrupt__, auto_psv)) _T2Interrupt(void)
     }
 }
 
-void setpoint_circle_step(float *spx, float *spy)
+void setpoint_circle_step(void)
 {
-    static float t = 0.0;
-
+    static float t = 0.0f;
     const float w = 2*BW_PI * SP_FREQ_HZ;
-    *spx = SP_X + (SP_R * cosf(w * t));
-    *spy = SP_Y + (SP_R * sinf(w * t));
+
+    spx = SP_X + (SP_R * cosf(w * t));
+    spy = SP_Y + (SP_R * sinf(w * t));
 
     t += PD_TS;
 }
@@ -305,22 +310,15 @@ void main_loop(void)
         exec_busy = 1;
         new_xy_ready = 0;
 
-        x_f = butterworth_filter_x((float)x_raw);
-        y_f = butterworth_filter_y((float)y_raw);
+        x_f = butterworth_filter_x(x_raw);
+        y_f = butterworth_filter_y(y_raw);
         
-        float spx, spy;
-        setpoint_circle_step(&spx, &spy);
-
+        setpoint_circle_step();
         ux = pd_controller_x(spx, x_f);
         uy = pd_controller_y(spy, y_f);
 
-        int dutyX = (int)(DUTY_X_FLAT + (U_TO_DUTY * ux));
-        int dutyY = (int)(DUTY_Y_FLAT + (U_TO_DUTY * uy));
-
-        if (dutyX < PWM_MIN_US) dutyX = PWM_MIN_US;
-        if (dutyX > PWM_MAX_US) dutyX = PWM_MAX_US;
-        if (dutyY < PWM_MIN_US) dutyY = PWM_MIN_US;
-        if (dutyY > PWM_MAX_US) dutyY = PWM_MAX_US;
+        int dutyX = DUTY_X_FLAT + (U_TO_DUTY * ux);
+        int dutyY = DUTY_Y_FLAT + (U_TO_DUTY * uy);
 
         servo_setduty(1, (uint16_t)dutyX);
         servo_setduty(0, (uint16_t)dutyY);
