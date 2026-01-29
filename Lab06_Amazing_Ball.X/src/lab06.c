@@ -35,7 +35,31 @@
 #define TOUCH_DIM_X 0
 #define TOUCH_DIM_Y 1
 
+#define BW_TS 0.04
+#define BW_FC 3.0
+#define BW_PI 3.142
+#define BW_A ((2.0 * BW_PI * BW_FC * BW_TS) / (1.0 + (2.0 * BW_PI * BW_FC * BW_TS))) //filter coefficient
+
+#define PD_TS 0.04
+#define KP_X 0.25
+#define KD_X 0.08
+#define KP_Y 0.25
+#define KD_Y 0.08
+
+#define SP_X 512.0
+#define SP_Y 512.0
+
+#define DUTY_X_FLAT 1450 //LCD to sticker
+#define DUTY_Y_FLAT 1400 // sticker to bottom
+
+#define U_TO_DUTY 1.0
+
 uint16_t x, y;
+uint16_t x_raw = 0;
+uint16_t y_raw = 0;
+uint8_t  new_xy_ready = 0;
+uint16_t miss_deadline = 0;
+uint8_t  exec_busy = 0;
 /*
  * Timer Code
  */
@@ -47,7 +71,7 @@ void timer_initialize(void)
     CLEARBIT(T2CONbits.TGATE);
     T2CONbits.TCKPS = TCKPS_64;
     TMR2 = 0;
-    PR2 = 2000;
+    PR2 = 4000;
     
     IFS0bits.T2IF = 0;
     IPC1bits.T2IP = 1;
@@ -169,7 +193,6 @@ void touchscreen_set_dimension(uint8_t dim)
     }
     
     SETBIT(AD1CON1bits.ADON);
-    __delay_ms(10);
 }
 
 uint16_t touchscreen_read(void)
@@ -183,22 +206,69 @@ uint16_t touchscreen_read(void)
 /*
  * PD Controller
  */
+float pd_controller_x(float setpoint, float measurement)
+{
+    static float e_prev_x = 0.0;
+    float e = setpoint - measurement;
+    float de_dt = 0.0;
 
+    de_dt = (e - e_prev_x) / PD_TS;
+    e_prev_x = e;
+
+    return (KP_X * e) + (KD_X * de_dt);
+}
+
+// ---------- Y axis ----------
+float pd_controller_y(float setpoint, float measurement)
+{
+    static float e_prev_y = 0.0;
+    float e = setpoint - measurement;
+    float de_dt = 0.0;
+
+    de_dt = (e - e_prev_y) / PD_TS;
+    e_prev_y = e;
+
+    return (KP_Y * e) + (KD_Y * de_dt);
+}
 
 
 /*
  * Butterworth Filter N=1, Cutoff 3 Hz, sampling @ 50 Hz
  */
+float butterworth_filter_x(float x)
+{
+    static float y_prev_x = 0.0;
+    y_prev_x = y_prev_x + BW_A * (x - y_prev_x);
+    return y_prev_x;
+}
+
+float butterworth_filter_y(float y)
+{
+    static float y_prev_y = 0.0f;
+    y_prev_y = y_prev_y + BW_A * (y - y_prev_y);
+    return y_prev_y;
+}
 
 void __attribute__((__interrupt__, auto_psv)) _T2Interrupt(void)
 {
+    uint8_t static state = 0;
     IFS0bits.T2IF = 0;
-    touchscreen_set_dimension(TOUCH_DIM_X);
-    x = touchscreen_read();
-    touchscreen_set_dimension(TOUCH_DIM_Y);
-    y = touchscreen_read();
-    lcd_locate(0, 6);
-    lcd_printf("X/Y = %u/%u  ", x, y);
+
+    if (exec_busy) miss_deadline++;
+
+    if (state == 0) {
+        touchscreen_set_dimension(TOUCH_DIM_X);
+        state = 1;
+    } else if (state == 1) {
+        x_raw = touchscreen_read();
+        touchscreen_set_dimension(TOUCH_DIM_Y);
+        state = 2;
+    } else {
+        y_raw = touchscreen_read();
+        touchscreen_set_dimension(TOUCH_DIM_X);
+        state = 1;
+        new_xy_ready = 1;
+    }
 }
 
 /*
@@ -206,41 +276,67 @@ void __attribute__((__interrupt__, auto_psv)) _T2Interrupt(void)
  */
 void main_loop(void)
 {
-    // print assignment information
+    lcd_clear();
     lcd_printf("Lab06: Amazing Ball");
     lcd_locate(0, 1);
     lcd_printf("Group: 5");
     lcd_locate(0, 2);
-    
+
     servo_initialize();
     touchscreen_initialize();
     
-    //0
-    servo_setduty(0, 1500);
-    servo_setduty(1, 1800);
-    __delay_ms(5000);
+    // touchscreen_set_dimension(TOUCH_DIM_X);
+
+    // Set initial position
+    servo_setduty(0, DUTY_Y_FLAT);
+    servo_setduty(1, DUTY_X_FLAT);
+
+
+    float x_f = 0.0f, y_f = 0.0f;
+    float ux = 0.0f, uy = 0.0f;
+
+    uint16_t lcd_div = 0;   // 50 Hz -> 5 Hz (print every 10 control steps)
 
     while (TRUE)
     {
-       
-        //1
-        servo_setduty(0, PWM_MIN_US);
-        servo_setduty(1, PWM_MIN_US);
-        __delay_ms(5000);
+        // Wait for a fresh XY pair (arrives at 50 Hz from ISR)
+        if (!new_xy_ready) continue;
 
-        //2
-        servo_setduty(0, PWM_MAX_US);
-        servo_setduty(1, PWM_MIN_US);
-        __delay_ms(5000);
+        exec_busy = 1;
+        new_xy_ready = 0;
 
-        //3
-        servo_setduty(0, PWM_MAX_US);
-        servo_setduty(1, PWM_MAX_US);
-        __delay_ms(5000);
+        x_f = butterworth_filter_x((float)x_raw);
+        y_f = butterworth_filter_y((float)y_raw);
 
-        //4
-        servo_setduty(0, PWM_MIN_US);
-        servo_setduty(1, PWM_MAX_US);
-        __delay_ms(5000);
+        ux = pd_controller_x(SP_X, x_f);
+        uy = pd_controller_y(SP_Y, y_f);
+
+        int dutyX = (int)(DUTY_X_FLAT + (U_TO_DUTY * ux));
+        int dutyY = (int)(DUTY_Y_FLAT + (U_TO_DUTY * uy));
+
+        if (dutyX < PWM_MIN_US) dutyX = PWM_MIN_US;
+        if (dutyX > PWM_MAX_US) dutyX = PWM_MAX_US;
+        if (dutyY < PWM_MIN_US) dutyY = PWM_MIN_US;
+        if (dutyY > PWM_MAX_US) dutyY = PWM_MAX_US;
+
+        servo_setduty(1, (uint16_t)dutyX); // X
+        servo_setduty(0, (uint16_t)dutyY); // Y
+
+        lcd_div++;
+        if (lcd_div >= 10) {
+            lcd_div = 0;
+
+            lcd_locate(0, 4);
+            lcd_printf("X/Y=%4u/%4u ", x_raw, y_raw);
+
+            lcd_locate(0, 5);
+            lcd_printf("FX/FY=%4u/%4u ", (uint16_t)x_f, (uint16_t)y_f);
+
+            lcd_locate(0, 6);
+            lcd_printf("miss=%u     ", miss_deadline);
+        }
+
+        exec_busy = 0;
     }
 }
+
