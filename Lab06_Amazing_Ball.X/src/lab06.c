@@ -28,28 +28,25 @@
 #define TOUCH_DIM_X 0
 #define TOUCH_DIM_Y 1
 
-#define BW_TS 0.04
+#define BW_TS 0.02 // 50Hz, 20ms was 0.04, check if params still good
 #define BW_FC 3.0
 #define BW_PI 3.142
 #define BW_A ((2.0 * BW_PI * BW_FC * BW_TS) / (1.0 + (2.0 * BW_PI * BW_FC * BW_TS))) //filter coefficient
 
-#define PD_TS 0.04
+#define PD_TS 0.02 // 50Hz
 #define KP_X 0.35
 #define KD_X 0.66
 #define KP_Y 0.35
 #define KD_Y 0.66
 
-#define SP_X 512.0
-#define SP_Y 512.0
+#define SP_X 512.0 //circle in the middle
+#define SP_Y 512.0 //circle in the middle
 #define SP_R 150.0 // radius 
 #define SP_FREQ_HZ 0.40// circle frequency
 
 #define DUTY_X_FLAT 1450 //LCD to sticker
 #define DUTY_Y_FLAT 1400 // sticker to bottom
 
-#define U_TO_DUTY 1.0
-
-uint16_t x, y;
 uint16_t x_raw = 0;
 uint16_t y_raw = 0;
 uint8_t  new_xy_ready = 0;
@@ -58,7 +55,6 @@ uint8_t  exec_busy = 0;
 
 volatile float spx = 512.0;
 volatile float spy = 512.0;
-
 
 /*
  * Timer Code
@@ -71,13 +67,12 @@ void timer_initialize(void)
     CLEARBIT(T2CONbits.TGATE);
     T2CONbits.TCKPS = TCKPS_64;
     TMR2 = 0;
-    PR2 = 4000;
+    PR2 = 2000;
     
     IFS0bits.T2IF = 0;
     IPC1bits.T2IP = 1;
     IEC0bits.T2IE = 1;
 }
-
 
 /*
  * Servo Code
@@ -101,8 +96,8 @@ void servo_initialize(void){
 }
 
 void servo_setduty(uint8_t servo, uint16_t duty_us){
-    if (duty_us < 1000) duty_us = 1000;
-    if (duty_us > 2000) duty_us = 2000;
+    if (duty_us < PWM_MIN_US) duty_us = PWM_MIN_US;
+    if (duty_us > PWM_MAX_US) duty_us = PWM_MAX_US;
     
     uint16_t pulseTicks = duty_us / 5; //5us per tick (64/Fcy)
     
@@ -272,7 +267,7 @@ void __attribute__((__interrupt__, auto_psv)) _T2Interrupt(void)
 
 void setpoint_circle_step(void)
 {
-    static float t = 0.0f;
+    static float t = 0.0;
     const float w = 2*BW_PI * SP_FREQ_HZ;
 
     spx = SP_X + (SP_R * cosf(w * t));
@@ -317,11 +312,11 @@ void main_loop(void)
         ux = pd_controller_x(spx, x_f);
         uy = pd_controller_y(spy, y_f);
 
-        int dutyX = DUTY_X_FLAT + (U_TO_DUTY * ux);
-        int dutyY = DUTY_Y_FLAT + (U_TO_DUTY * uy);
+        int dutyX = DUTY_X_FLAT + ux;
+        int dutyY = DUTY_Y_FLAT + uy;
 
-        servo_setduty(1, (uint16_t)dutyX);
-        servo_setduty(0, (uint16_t)dutyY);
+        servo_setduty(1, dutyX);
+        servo_setduty(0, dutyY);
 
         lcd_div++;
         if (lcd_div >= 10) {
