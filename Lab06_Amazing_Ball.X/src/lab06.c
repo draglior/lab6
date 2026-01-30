@@ -35,14 +35,14 @@
 
 #define PD_TS 0.02 // 50Hz
 #define KP_X 0.35
-#define KD_X 0.66
+#define KD_X 0.2
 #define KP_Y 0.35
-#define KD_Y 0.66
+#define KD_Y 0.2
 
 #define SP_X 512.0 //circle in the middle
 #define SP_Y 512.0 //circle in the middle
-#define SP_R 150.0 // radius 
-#define SP_FREQ_HZ 0.40// circle frequency
+#define SP_R 120.0 // radius 
+#define SP_FREQ_HZ 0.50// circle frequency
 
 #define DUTY_X_FLAT 1450 //LCD to sticker
 #define DUTY_Y_FLAT 1400 // sticker to bottom
@@ -101,7 +101,7 @@ void servo_setduty(uint8_t servo, uint16_t duty_us){
     
     uint16_t pulseTicks = duty_us / 5; //5us per tick (64/Fcy)
     
-    uint16_t invertedTicks = 4000 - pulseTicks; //20ms/5us = period ticks
+    uint16_t invertedTicks = 2000 - pulseTicks; //20ms/5us = period ticks
     if (servo == 0) OC7RS = invertedTicks;
     else if (servo == 1) OC8RS = invertedTicks;
    
@@ -328,4 +328,3 @@ void main_loop(void)
         exec_busy = 0;
     }
 }
-
